@@ -18,12 +18,12 @@ def align_images(old_img, new_img):
     kp1, des1 = orb.detectAndCompute(old_gray, None)
     kp2, des2 = orb.detectAndCompute(new_gray, None)
 
-    # Match features using brute-force matcher with Hamming distance
+    # Match features using brute-force matching with Hamming distance
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matches = bf.match(des1, des2)
     matches = sorted(matches, key=lambda x: x.distance)
 
-    # Extract location of good matches
+    # Extract locations of good matches
     src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
 
@@ -42,10 +42,10 @@ def detect_added_elements(old_img, new_img, min_contour_area=100):
     Detect elements that are present in new_img (BGR) but not in old_img (BGR).
     Returns a binary mask for the added regions.
     """
-    # First, align the old image to the new image
+    # Align the old image to the new image
     old_aligned = align_images(old_img, new_img)
 
-    # Compute absolute difference between new image and aligned old image
+    # Compute the absolute difference between the new image and aligned old image
     diff = cv2.absdiff(new_img, old_aligned)
     diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
 
@@ -57,7 +57,7 @@ def detect_added_elements(old_img, new_img, min_contour_area=100):
     cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
     cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    # Find contours and filter small regions
+    # Find contours and filter out small areas
     contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     mask = np.zeros_like(cleaned)
     for cnt in contours:
@@ -72,14 +72,14 @@ def detect_deleted_elements(old_img, new_img, min_contour_area=100):
     Detect elements that were present in old_img but have been removed in new_img.
     Returns a tuple: (binary mask for deleted regions, aligned old image)
     """
-    # Align old image to new image
+    # Align the old image to the new image
     aligned_old = align_images(old_img, new_img)
 
     # Convert both images to grayscale
     old_gray = cv2.cvtColor(aligned_old, cv2.COLOR_BGR2GRAY)
     new_gray = cv2.cvtColor(new_img, cv2.COLOR_BGR2GRAY)
 
-    # For deleted elements: subtract the old from the new (so white shows removed parts)
+    # For deleted elements, subtract the old from the new (white where removed)
     diff = cv2.subtract(new_gray, old_gray)
 
     # Threshold to obtain binary mask of deleted areas
@@ -100,38 +100,61 @@ def detect_deleted_elements(old_img, new_img, min_contour_area=100):
     return mask, aligned_old
 
 
-def highlight_additions_on_white_cv2(old_img, new_img):
+def highlight_additions_on_background_cv2(old_img, new_img, style="background-white"):
     """
-    Process the added elements: extract them from the new image and overlay on a white background.
-    The images are assumed to be in BGR.
-    Returns the resulting image (BGR).
+    Process the added elements:
+      - If style is "background-white": return a white background with only added regions (from new image) visible.
+      - If style is "greyscale": return a greyscale version of the new image with the added regions in full color.
     """
     added_mask = detect_added_elements(old_img, new_img)
-    added_elements = cv2.bitwise_and(new_img, new_img, mask=added_mask)
-    white_background = np.full(new_img.shape, 255, dtype=np.uint8)
-    white_background[added_mask == 255] = added_elements[added_mask == 255]
-    return white_background
+
+    if style == "background-white":
+        # White background
+        background = np.full(new_img.shape, 255, dtype=np.uint8)
+        result = background.copy()
+        # Overlay the added regions from the new image (in color)
+        result[added_mask == 255] = new_img[added_mask == 255]
+    elif style == "greyscale":
+        # Convert the entire new image to greyscale and then back to BGR
+        gray = cv2.cvtColor(new_img, cv2.COLOR_BGR2GRAY)
+        gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        result = gray_bgr.copy()
+        # Overlay the added regions in full color
+        result[added_mask == 255] = new_img[added_mask == 255]
+    else:
+        result = None
+    return result
 
 
-def highlight_deletions_on_white_cv2(old_img, new_img):
+def highlight_deletions_on_background_cv2(old_img, new_img, style="background-white"):
     """
-    Process the deleted elements: extract them from the aligned old image and overlay on a white background.
-    The images are assumed to be in BGR.
-    Returns the resulting image (BGR).
+    Process the deleted elements:
+      - If style is "background-white": return a white background with only deleted regions (from aligned old image) visible.
+      - If style is "greyscale": return a greyscale version of the aligned old image with the deleted regions in full color.
     """
     deleted_mask, aligned_old = detect_deleted_elements(old_img, new_img)
-    deleted_elements = cv2.bitwise_and(aligned_old, aligned_old, mask=deleted_mask)
-    white_background = np.full(aligned_old.shape, 255, dtype=np.uint8)
-    white_background[deleted_mask == 255] = deleted_elements[deleted_mask == 255]
-    return white_background
+
+    if style == "background-white":
+        background = np.full(aligned_old.shape, 255, dtype=np.uint8)
+        result = background.copy()
+        result[deleted_mask == 255] = aligned_old[deleted_mask == 255]
+    elif style == "greyscale":
+        # Convert the aligned old image to greyscale then back to BGR
+        gray = cv2.cvtColor(aligned_old, cv2.COLOR_BGR2GRAY)
+        gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        result = gray_bgr.copy()
+        # Overlay the deleted regions in full color (from aligned old image)
+        result[deleted_mask == 255] = aligned_old[deleted_mask == 255]
+    else:
+        result = None
+    return result
 
 
 # ----------------- Gradio Interface Function ----------------- #
-def process_images(old_img, new_img):
+def process_images(old_img, new_img, output_style):
     """
-    Expects two images (old and new) as input in RGB format.
-    Converts them to BGR, processes the added and deleted elements,
-    and returns two images (converted back to RGB) for display.
+    Expects two images (old and new) in RGB format and an output style.
+    Converts them to BGR for processing, then returns two images (converted back to RGB) for display.
     """
     if old_img is None or new_img is None:
         return None, None
@@ -140,14 +163,17 @@ def process_images(old_img, new_img):
     old_bgr = cv2.cvtColor(old_img, cv2.COLOR_RGB2BGR)
     new_bgr = cv2.cvtColor(new_img, cv2.COLOR_RGB2BGR)
 
-    # Process for added and deleted elements
-    added_result_bgr = highlight_additions_on_white_cv2(old_bgr, new_bgr)
-    deleted_result_bgr = highlight_deletions_on_white_cv2(old_bgr, new_bgr)
+    # Process added and deleted elements using the selected style
+    added_result_bgr = highlight_additions_on_background_cv2(
+        old_bgr, new_bgr, style=output_style
+    )
+    deleted_result_bgr = highlight_deletions_on_background_cv2(
+        old_bgr, new_bgr, style=output_style
+    )
 
     # Convert results back to RGB for display in Gradio
     added_result = cv2.cvtColor(added_result_bgr, cv2.COLOR_BGR2RGB)
     deleted_result = cv2.cvtColor(deleted_result_bgr, cv2.COLOR_BGR2RGB)
-
     return added_result, deleted_result
 
 
@@ -156,17 +182,23 @@ with gr.Blocks() as demo:
     gr.Markdown("# Compare Images: Added & Deleted Elements")
     gr.Markdown(
         """
-        Upload the **Old Image** and the **New Image** (both as technical drawings or similar)
-        and click **Process** to see:
+        Upload the **Old Image** and the **New Image** (e.g. technical drawings) and select an output style.
         
-        - **Added**: New elements that appear in the new image.
-        - **Deleted**: Elements that were removed from the old image.
+        - **background-white**: The output shows a white background with only the changed regions.
+        - **greyscale**: The output shows a greyscale version of the full image with the changed regions in full color.
         """
     )
 
     with gr.Row():
         old_image = gr.Image(label="Old Image", type="numpy")
         new_image = gr.Image(label="New Image", type="numpy")
+
+    # Radio button for output style selection
+    output_style = gr.Radio(
+        choices=["background-white", "greyscale"],
+        label="Output Style",
+        value="background-white",
+    )
 
     process_button = gr.Button("Process")
 
@@ -178,15 +210,9 @@ with gr.Blocks() as demo:
 
     process_button.click(
         fn=process_images,
-        inputs=[old_image, new_image],
+        inputs=[old_image, new_image, output_style],
         outputs=[added_output, deleted_output],
     )
 
-    # Launch the app
-    demo.launch(
-        show_api=False,  # Hides the "Use via API" link in the footer
-        share=False,  # Do not allow sharing the link publicly
-        pwa=True,  # Enables PWA support
-        favicon_path="./favicon.ico",  # Correctly set the favicon path
-        server_port=7866,  # Specify the port number
-    )
+# Launch the app
+demo.launch()
