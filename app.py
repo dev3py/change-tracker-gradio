@@ -277,5 +277,5 @@ with gr.Blocks(
         pwa=True,  # Enables PWA support
         favicon_path="./favicon.ico",  # Correctly set the favicon path
         server_port=7866,  # Specify the port number
-        auth=[("gollabadmin", "nipl18"), ("admin", "gollab18")],
+        # auth=[("gollabadmin", "nipl18"), ("admin", "gollab18")],
     )
