@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 WORKDIR /usr/src/app
 COPY . .
 # Install system dependencies (if needed, e.g., libgl for image processing)

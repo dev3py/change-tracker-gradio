@@ -216,14 +216,14 @@ def process_images(old_img, new_img, output_style):
 
 # ----------------- Build the Gradio Interface ----------------- #
 with gr.Blocks(
-    title="Track Changer",
+    title="Change Tracker",
     theme="default",
     css="footer{display:none !important}",
 ) as demo:
-    gr.Markdown("# Compare Images: Added & Deleted Elements")
+    gr.Markdown("# Change Tracker")
     gr.Markdown(
         """
-        Upload the **Old Image** and the **New Image** (e.g. technical drawings) and select an output style.
+        Upload the **Previous Image** and the **Latest Image**  and select an output style.
         
         - **Only-Changed**: A white background with only the changed regions visible.
         - **Greyscale**: A Greyscale version of the image with the changed regions in full color.
@@ -277,5 +277,5 @@ with gr.Blocks(
         pwa=True,  # Enables PWA support
         favicon_path="./favicon.ico",  # Correctly set the favicon path
         server_port=7866,  # Specify the port number
-        # auth=[("Abubakar", "Abubakar"), ("Ali", "Ali")],
+        auth=[("gollabadmin", "nipl18"), ("admin", "gollab18")],
     )
