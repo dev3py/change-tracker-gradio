@@ -102,13 +102,27 @@ def detect_deleted_elements(old_img, new_img, min_contour_area=100):
     return mask, aligned_old
 
 
+def detect_color_changed_elements(old_img, new_img, threshold):
+    """
+    Detect pixels where the color difference between new_img and old_img exceeds the threshold.
+    Only considers pixels where both images are not nearly white.
+    Returns a binary mask.
+    """
+    diff = np.linalg.norm(
+        new_img.astype(np.float32) - old_img.astype(np.float32), axis=2
+    )
+    mask = diff > threshold
+    not_white_old = np.all(old_img < 240, axis=2)
+    not_white_new = np.all(new_img < 240, axis=2)
+    combined = mask & not_white_old & not_white_new
+    return (combined.astype(np.uint8)) * 255
+
+
 def highlight_additions_on_background_cv2(old_img, new_img, style="Only-Changed"):
-    # """
     # For non-animated outputs:
     #   - If style is "Only-Changed": return a white background with only the added regions (from new image) visible.
     #   - If style is "Greyscale": return a Greyscale version of the new image with the added regions in full color.
     #   - If style is "Specific-Colors": return a Greyscale background with added regions forced to the user-specified color.
-    # """
     added_mask = detect_added_elements(old_img, new_img)
 
     if style == "Only-Changed":
@@ -116,35 +130,26 @@ def highlight_additions_on_background_cv2(old_img, new_img, style="Only-Changed"
         result = background.copy()
         result[added_mask == 255] = new_img[added_mask == 255]
     elif style == "Greyscale":
-        # Convert the entire new image to Greyscale, then back to BGR
         gray = cv2.cvtColor(new_img, cv2.COLOR_BGR2GRAY)
         gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         result = gray_bgr.copy()
-        # Overlay the added regions in full color
         result[added_mask == 255] = new_img[added_mask == 255]
     elif style == "Specific-Colors":
-        # Convert the entire new image to Greyscale, then back to BGR
         gray = cv2.cvtColor(new_img, cv2.COLOR_BGR2GRAY)
         gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         result = gray_bgr.copy()
-        # Force the added regions to the user-specified color (handled in process_images)
-        # (The color will be applied in process_images.)
-        # Here we simply mark the regions.
-        result[added_mask == 255] = result[
-            added_mask == 255
-        ]  # Placeholder; will be overridden.
+        # Placeholder; actual color override is applied in process_images.
+        result[added_mask == 255] = result[added_mask == 255]
     else:
         result = None
     return result, added_mask
 
 
 def highlight_deletions_on_background_cv2(old_img, new_img, style="Only-Changed"):
-    """
-    For non-animated outputs:
-      - If style is "Only-Changed": return a white background with only the deleted regions (from aligned old image) visible.
-      - If style is "Greyscale": return a Greyscale version of the aligned old image with the deleted regions in full color.
-      - If style is "Specific-Colors": return a Greyscale background with deleted regions forced to the user-specified color.
-    """
+    # For non-animated outputs:
+    #   - If style is "Only-Changed": return a white background with only the deleted regions (from aligned old image) visible.
+    #   - If style is "Greyscale": return a Greyscale version of the aligned old image with the deleted regions in full color.
+    #   - If style is "Specific-Colors": return a Greyscale background with deleted regions forced to the user-specified color.
     deleted_mask, aligned_old = detect_deleted_elements(old_img, new_img)
 
     if style == "Only-Changed":
@@ -160,12 +165,8 @@ def highlight_deletions_on_background_cv2(old_img, new_img, style="Only-Changed"
         gray = cv2.cvtColor(aligned_old, cv2.COLOR_BGR2GRAY)
         gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         result = gray_bgr.copy()
-        # Force the deleted regions to the user-specified color (handled in process_images)
-        # (The color will be applied in process_images.)
-        # Here we simply mark the regions.
-        result[deleted_mask == 255] = result[
-            deleted_mask == 255
-        ]  # Placeholder; will be overridden.
+        # Placeholder; actual color override is applied in process_images.
+        result[deleted_mask == 255] = result[deleted_mask == 255]
     else:
         result = None
     return result, deleted_mask, aligned_old
@@ -179,14 +180,12 @@ def hex_to_bgr(color_string):
     print("color_string:", color_string)
     color_string = color_string.strip()
     if color_string.startswith("#"):
-        # Hexadecimal format.
         hex_color = color_string.lstrip("#")
         r = int(hex_color[0:2], 16)
         g = int(hex_color[2:4], 16)
         b = int(hex_color[4:6], 16)
         return np.array([b, g, r], dtype=np.uint8)
     elif color_string.lower().startswith("rgba"):
-        # RGBA format: ignore the alpha channel.
         inside = color_string[color_string.find("(") + 1 : color_string.find(")")]
         parts = inside.split(",")
         if len(parts) < 3:
@@ -196,7 +195,6 @@ def hex_to_bgr(color_string):
         b = int(float(parts[2].strip()))
         return np.array([b, g, r], dtype=np.uint8)
     elif color_string.lower().startswith("rgb"):
-        # RGB format.
         inside = color_string[color_string.find("(") + 1 : color_string.find(")")]
         parts = inside.split(",")
         if len(parts) < 3:
@@ -206,7 +204,6 @@ def hex_to_bgr(color_string):
         b = int(float(parts[2].strip()))
         return np.array([b, g, r], dtype=np.uint8)
     else:
-        # Fallback: try treating it as a hex string.
         hex_color = color_string.lstrip("#")
         r = int(hex_color[0:2], 16)
         g = int(hex_color[2:4], 16)
@@ -214,39 +211,64 @@ def hex_to_bgr(color_string):
         return np.array([b, g, r], dtype=np.uint8)
 
 
-# ----------------- Gradio Interface Function ----------------- #
-def process_images(old_img, new_img, output_style, added_color, removed_color):
+def detect_color_changed_elements(old_img, new_img, threshold):
     """
-    Expects two images (old and new) in RGB format, an output style, and two color values.
-    Converts them to BGR for processing, then returns either:
-      - For "Animation": two animated GIF file paths (one for added and one for deleted)
-      - For static outputs ("Only-Changed", "Greyscale", "Specific-Colors"):
-          two static images (converted back to RGB) for display.
+    Detect pixels where the color difference between new_img and old_img exceeds the threshold.
+    Returns a binary mask.
+    """
+    diff = np.linalg.norm(
+        new_img.astype(np.float32) - old_img.astype(np.float32), axis=2
+    )
+    mask = diff > threshold
+    not_white_old = np.all(old_img < 240, axis=2)
+    not_white_new = np.all(new_img < 240, axis=2)
+    combined = mask & not_white_old & not_white_new
+    return (combined.astype(np.uint8)) * 255
+
+
+# ----------------- Gradio Interface Function ----------------- #
+def process_images(
+    old_img,
+    new_img,
+    output_style,
+    added_color,
+    removed_color,
+    changed_color,
+    color_threshold,
+):
+    """
+    Expects two images (old and new) in RGB format, an output style, and three color values plus a threshold.
+    Converts them to BGR for processing, then returns three outputs:
+      - Added output (result for added regions)
+      - Removed output (result for removed regions)
+      - Color-Changed output (result for pixels with significant color changes)
+
+    The Color-Changed output is always computed using the aligned old image (to match new image dimensions)
+    so that the subtraction works correctly. If the selected output style is "Color-Changed",
+    the user-specified changed color is used; otherwise, a default red (#FF0000) is used.
     """
     if old_img is None or new_img is None:
-        return None, None
+        return None, None, None
 
-    # Convert from RGB (Gradio default) to BGR (OpenCV default)
+    # Convert input images from RGB to BGR.
     old_bgr = cv2.cvtColor(old_img, cv2.COLOR_RGB2BGR)
     new_bgr = cv2.cvtColor(new_img, cv2.COLOR_RGB2BGR)
 
+    # Branch for processing Added and Removed outputs based on output_style.
     if output_style == "Animation":
-        # ----- Generate Animation for "Added" Regions -----
+        # Process Added output as an animated GIF.
         added_mask = detect_added_elements(old_bgr, new_bgr)
-        # Base: Greyscale version of new image
         gray_new = cv2.cvtColor(new_bgr, cv2.COLOR_BGR2GRAY)
         gray_new_bgr = cv2.cvtColor(gray_new, cv2.COLOR_GRAY2BGR)
-        num_frames = 10  # Increase the number of frames for a longer Animation
+        num_frames = 10
         added_frames = []
         for i in range(num_frames):
             frame = gray_new_bgr.copy()
-            # Blink: overlay the colored regions every other frame
             if i % 2 == 0:
                 frame[added_mask == 255] = new_bgr[added_mask == 255]
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             added_frames.append(frame_rgb)
-
-        # ----- Generate Animation for "Deleted" Regions -----
+        # Process Removed output as an animated GIF.
         deleted_mask, aligned_old = detect_deleted_elements(old_bgr, new_bgr)
         gray_old = cv2.cvtColor(aligned_old, cv2.COLOR_BGR2GRAY)
         gray_old_bgr = cv2.cvtColor(gray_old, cv2.COLOR_GRAY2BGR)
@@ -257,56 +279,103 @@ def process_images(old_img, new_img, output_style, added_color, removed_color):
                 frame[deleted_mask == 255] = aligned_old[deleted_mask == 255]
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             deleted_frames.append(frame_rgb)
-
-        # Save Animations as temporary GIF files with infinite looping.
         temp_added = tempfile.NamedTemporaryFile(delete=False, suffix=".gif")
         temp_deleted = tempfile.NamedTemporaryFile(delete=False, suffix=".gif")
         temp_added.close()
         temp_deleted.close()
-        # Use loop=0 for infinite loops, adjust duration as needed.
         imageio.mimsave(temp_added.name, added_frames, duration=0.5, loop=0)
         imageio.mimsave(temp_deleted.name, deleted_frames, duration=0.5, loop=0)
-        return temp_added.name, temp_deleted.name
+        added_out = temp_added.name
+        deleted_out = temp_deleted.name
 
     elif output_style == "Specific-Colors":
-        # For Specific-Colors, use a Greyscale background with added regions forced to the user-specified color and deleted regions forced to the user-specified color.
-        # Process Added Regions:
+        # Use user-specified colors for Added and Removed outputs.
         added_mask = detect_added_elements(old_bgr, new_bgr)
         gray_new = cv2.cvtColor(new_bgr, cv2.COLOR_BGR2GRAY)
         gray_new_bgr = cv2.cvtColor(gray_new, cv2.COLOR_GRAY2BGR)
-        user_added_color = hex_to_bgr(added_color)  # default red (#FF0000)
+        user_added_color = hex_to_bgr(added_color)
         added_result_bgr = gray_new_bgr.copy()
         added_result_bgr[added_mask == 255] = user_added_color
 
-        # Process Deleted Regions:
         deleted_mask, aligned_old = detect_deleted_elements(old_bgr, new_bgr)
         gray_old = cv2.cvtColor(aligned_old, cv2.COLOR_BGR2GRAY)
         gray_old_bgr = cv2.cvtColor(gray_old, cv2.COLOR_GRAY2BGR)
-        user_removed_color = hex_to_bgr(removed_color)  # default yellow (#FFFF00)
+        user_removed_color = hex_to_bgr(removed_color)
         deleted_result_bgr = gray_old_bgr.copy()
         deleted_result_bgr[deleted_mask == 255] = user_removed_color
 
-        added_result = cv2.cvtColor(added_result_bgr, cv2.COLOR_BGR2RGB)
-        deleted_result = cv2.cvtColor(deleted_result_bgr, cv2.COLOR_BGR2RGB)
-        return added_result, deleted_result
+        added_out = cv2.cvtColor(added_result_bgr, cv2.COLOR_BGR2RGB)
+        deleted_out = cv2.cvtColor(deleted_result_bgr, cv2.COLOR_BGR2RGB)
+
+    elif output_style == "Color-Changed":
+        # For Color-Changed style, process Added and Removed outputs like Specific-Colors.
+        added_mask = detect_added_elements(old_bgr, new_bgr)
+        gray_new = cv2.cvtColor(new_bgr, cv2.COLOR_BGR2GRAY)
+        gray_new_bgr = cv2.cvtColor(gray_new, cv2.COLOR_GRAY2BGR)
+        user_added_color = hex_to_bgr(added_color)
+        added_result_bgr = gray_new_bgr.copy()
+        added_result_bgr[added_mask == 255] = user_added_color
+
+        deleted_mask, aligned_old = detect_deleted_elements(old_bgr, new_bgr)
+        gray_old = cv2.cvtColor(aligned_old, cv2.COLOR_BGR2GRAY)
+        gray_old_bgr = cv2.cvtColor(gray_old, cv2.COLOR_GRAY2BGR)
+        user_removed_color = hex_to_bgr(removed_color)
+        deleted_result_bgr = gray_old_bgr.copy()
+        deleted_result_bgr[deleted_mask == 255] = user_removed_color
+
+        added_out = cv2.cvtColor(added_result_bgr, cv2.COLOR_BGR2RGB)
+        deleted_out = cv2.cvtColor(deleted_result_bgr, cv2.COLOR_BGR2RGB)
 
     else:
-        # For "Only-Changed" and "Greyscale" modes.
+        # For "Only-Changed", "Greyscale", etc.
         added_result_bgr, _ = highlight_additions_on_background_cv2(
             old_bgr, new_bgr, style=output_style
         )
         deleted_result_bgr, _, _ = highlight_deletions_on_background_cv2(
             old_bgr, new_bgr, style=output_style
         )
-        added_result = cv2.cvtColor(added_result_bgr, cv2.COLOR_BGR2RGB)
-        deleted_result = cv2.cvtColor(deleted_result_bgr, cv2.COLOR_BGR2RGB)
-        return added_result, deleted_result
+        added_out = cv2.cvtColor(added_result_bgr, cv2.COLOR_BGR2RGB)
+        deleted_out = cv2.cvtColor(deleted_result_bgr, cv2.COLOR_BGR2RGB)
+
+    # Always compute the Color-Changed output.
+    # Always align the old image to new image for computing the color difference.
+    aligned_old_for_color = align_images(old_bgr, new_bgr)
+    changed_mask = detect_color_changed_elements(
+        aligned_old_for_color, new_bgr, color_threshold
+    )
+    gray_new = cv2.cvtColor(new_bgr, cv2.COLOR_BGR2GRAY)
+    gray_new_bgr = cv2.cvtColor(gray_new, cv2.COLOR_GRAY2BGR)
+    # Use the user-specified changed color if the output style is "Color-Changed",
+    # otherwise default to red (#FF0000).
+    if output_style == "Color-Changed":
+        user_changed_color = hex_to_bgr(changed_color)
+    else:
+        user_changed_color = hex_to_bgr("#FF0000")
+    color_changed_result_bgr = gray_new_bgr.copy()
+    color_changed_result_bgr[changed_mask == 255] = user_changed_color
+    color_changed_result = cv2.cvtColor(color_changed_result_bgr, cv2.COLOR_BGR2RGB)
+
+    return added_out, deleted_out, color_changed_result
 
 
 # ----------------- Build the Gradio Interface ----------------- #
+js_func = """
+function refresh() {
+    const url = new URL(window.location);
+
+    if (url.searchParams.get('__theme') !== 'light') {
+        url.searchParams.set('__theme', 'light');
+        window.location.href = url.href;
+    }
+}
+"""
 with gr.Blocks(
     title="Change Tracker",
-    theme=gr.themes.Monochrome(),
+    theme=gr.themes.Monochrome().set(
+        loader_color="#FF0000",
+        # slider_color="#FF0000",
+    ),
+    js=js_func,
     css="footer{display:none !important}",
 ) as demo:
 
@@ -315,31 +384,26 @@ with gr.Blocks(
         with gr.Group():
             toggle_dark = gr.Button(value="Toggle Dark Mode")
 
-    # JavaScript to toggle the 'dark' class on the body
     toggle_dark.click(
         None,
-        js="""
-            () => {
-                document.body.classList.toggle('dark');
-            }
-            """,
+        js="""() => { document.body.classList.toggle('dark'); }""",
     )
     gr.Markdown(
         """
-            Upload the **Previous Image** and the **Latest Image**  and select an output style.
-            
-            - **Only-Changed**: A white background with only the changed regions visible.
-            - **Greyscale**: A Greyscale version of the image with the changed regions in full color.
-            - **Animation**: Similar to Greyscale, but the changed regions blink to attract attention.
-            - **Specific-Colors**: A Greyscale background with added regions in a user-specified color and removed regions in a user-specified color.
-            """
+        Upload the **Previous Image** and the **Latest Image** and select an output style.
+        
+        - **Only-Changed**: A white background with only the changed regions visible.
+        - **Greyscale**: A Greyscale version of the image with the changed regions in full color.
+        - **Animation**: Similar to Greyscale, but the changed regions blink to attract attention.
+        - **Specific-Colors**: A Greyscale background with added regions in a user-specified color and removed regions in a user-specified color.
+        - **Color-Changed**: A Greyscale background with elements whose color has changed over a threshold shown in a user-specified color.
+        """
     )
 
     with gr.Row():
         old_image = gr.Image(label="Previous", type="numpy")
         new_image = gr.Image(label="Latest", type="numpy")
 
-    # Add examples that will populate the "Old Image" and "New Image" fields when clicked.
     gr.Examples(
         examples=[
             ["examples/old.png", "examples/new.png"],
@@ -349,14 +413,18 @@ with gr.Blocks(
         label="Example Images",
     )
 
-    # Radio button for output style selection (four options now)
     output_style = gr.Radio(
-        choices=["Only-Changed", "Greyscale", "Animation", "Specific-Colors"],
+        choices=[
+            "Only-Changed",
+            "Greyscale",
+            "Animation",
+            "Specific-Colors",
+            "Color-Changed",
+        ],
         label="Output Style",
         value="Animation",
     )
 
-    # Color pickers for Specific-Colors mode; initially hidden.
     with gr.Row():
         added_color_picker = gr.ColorPicker(
             label="Added Color", value="#FF0000", visible=False
@@ -364,18 +432,50 @@ with gr.Blocks(
         removed_color_picker = gr.ColorPicker(
             label="Removed Color", value="#FFFF00", visible=False
         )
+        changed_color_picker = gr.ColorPicker(
+            label="Changed Color", value="#FF0000", visible=False
+        )
+        color_threshold_slider = gr.Slider(
+            label="Color Change Threshold",
+            minimum=0,
+            maximum=255,
+            value=50,
+            step=1,
+            visible=False,
+        )
 
-    # Toggle the visibility of the color pickers based on the output style.
     def toggle_color_pickers(style):
         if style == "Specific-Colors":
-            return gr.update(visible=True), gr.update(visible=True)
+            return (
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+            )
+        elif style == "Color-Changed":
+            return (
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
+                gr.update(visible=True),
+            )
         else:
-            return gr.update(visible=False), gr.update(visible=False)
+            return (
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+            )
 
     output_style.change(
         fn=toggle_color_pickers,
         inputs=output_style,
-        outputs=[added_color_picker, removed_color_picker],
+        outputs=[
+            added_color_picker,
+            removed_color_picker,
+            changed_color_picker,
+            color_threshold_slider,
+        ],
     )
 
     process_button = gr.Button("Process")
@@ -385,6 +485,8 @@ with gr.Blocks(
             added_output = gr.Image(label="Added (Output)")
         with gr.Tab("Removed"):
             deleted_output = gr.Image(label="Removed (Output)")
+        with gr.Tab("Color-Changed"):
+            color_changed_output = gr.Image(label="Color-Changed (Output)")
 
     process_button.click(
         fn=process_images,
@@ -394,21 +496,20 @@ with gr.Blocks(
             output_style,
             added_color_picker,
             removed_color_picker,
+            changed_color_picker,
+            color_threshold_slider,
         ],
-        outputs=[added_output, deleted_output],
+        outputs=[added_output, deleted_output, color_changed_output],
     )
 
-    # Footer
     gr.HTML(
         "<div style='bottom: 0; width: 100%; text-align: center; padding: 10px;'>Powered by Gollab</div>"
     )
 
-    # Launch the app
     demo.launch(
-        show_api=False,  # Hides the "Use via API" link in the footer
-        share=False,  # Do not allow sharing the link publicly
-        pwa=True,  # Enables PWA support
-        favicon_path="./favicon.ico",  # Correctly set the favicon path
-        server_port=7866,  # Specify the port number
-        # auth=[("gollabadmin", "nipl18"), ("admin", "gollab18")],
+        show_api=False,
+        share=False,
+        pwa=True,
+        favicon_path="./favicon.ico",
+        server_port=7866,
     )
