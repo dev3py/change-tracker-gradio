@@ -18,36 +18,36 @@ root/
 
 ## Setup Instructions
 
-1.  **Clone the repository:**
-    
+1. **Clone the repository:**
+
     ```bash
+
     git clone https://github.com/dev3py/change-tracker-gradio.git
     cd change-tracker-gradio
+
     ```
-    
-2.  **Create a virtual environment on Ubuntu (optional but recommended):**
-    
+
+2. **Create a virtual environment on Ubuntu (optional but recommended):**
+
     ```bash
     python -m venv venv
     source venv/bin/activate  # On Windows use `venv\Scripts\activate`
     ```
-    
+
     **Create a virtual environment on Windows (optional but recommended):**
-    
+
     ```bash
     python -m venv venv
     venv\Scripts\activate
     ```
-    
-3.  **Install the required dependencies:**
-    
+
+3. **Install the required dependencies:**
+
     ```bash
     pip install -r requirements.txt
     ```
-    
 
-Running the Application
------------------------
+## Running the Application
 
 To start the FastAPI application, run the following command:
 
@@ -57,33 +57,32 @@ python app.py
 
 The application will be accessible at `http://127.0.0.1:7866`.
 
-Docker Build
-------------
+## Docker Build
+
 
 ```bash
 docker build -t ctgr .
 ```
 
-Docker Run the Build
---------------------
+## Docker Run the Build
 
 ```bash
 docker run -p 7866:7866 --name ctgr-container -d ctgr
 ```
 
-Usage
------
-
+## Usage
 
 This is a Gradio-based application for detecting potholes in uploaded images. It uses a pre-trained detection model hosted on Roboflow via the `inference_sdk` API. The app dynamically loads test images from a local folder (`test`) and provides bounding boxes around detected potholes in bright orange.
 
 ### Features
 
-*   Upload images to detect potholes using a pre-trained model.
-*   Dynamically load test images from the `test` folder as examples.
-*   Displays detected potholes with bounding boxes and confidence scores.
-*   User-friendly interface powered by Gradio.
+* Upload images to detect potholes using a pre-trained model.
+* Dynamically load test images from the `test` folder as examples.
+* Displays detected potholes with bounding boxes and confidence scores.
+* User-friendly interface powered by Gradio.
+  
+### Example Output
 
+Below is an example output image showing the detected potholes with bounding boxes:
 
-    
----------------
+![Example Output](ui-sample.png)
