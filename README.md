@@ -67,7 +67,7 @@ docker build -t ctgr .
 ## Docker Run the Build
 
 ```bash
-docker run -p 7866:7866 --name ctgr-container -d ctgr
+docker run -p 7866:7866 --name ctgr-container --restart unless-stopped -d ctgr
 ```
 
 ## Usage
