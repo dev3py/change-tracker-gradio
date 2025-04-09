@@ -8,6 +8,8 @@ import requests
 from zipfile import ZipFile
 import uuid
 import shutil
+from PyPDF2 import PdfReader, PdfWriter  # For annotation removal
+from PIL import Image
 
 
 # ----------------- Helper Functions (OpenCV Processing) ----------------- #
@@ -231,56 +233,158 @@ def detect_color_changed_elements(old_img, new_img, threshold):
     return (combined.astype(np.uint8)) * 255
 
 
+# ----------------- PDF Sanitization via API ----------------- #
+# ----------------- PDF Sanitization via API ----------------- #
+def sanitize_pdf_api(pdf_path):
+    """
+    Sanitize a PDF using the external API with specified options.
+    Returns the path to the sanitized PDF.
+    """
+    sanitize_api_url = "https://pdfhubaws.bizzaard.com/api/v1/security/sanitize-pdf"
+
+    files = {"fileInput": ("input.pdf", open(pdf_path, "rb"), "application/pdf")}
+    data = {"removeJavaScript": "false", "removeEmbeddedFiles": "false"}
+
+    try:
+        response = requests.post(
+            sanitize_api_url, files=files, data=data, timeout=300, stream=True
+        )
+
+        if response.status_code != 200:
+            raise Exception(
+                f"PDF sanitization failed with status {response.status_code}: {response.text}"
+            )
+
+        sanitized_pdf_path = tempfile.NamedTemporaryFile(
+            delete=False, suffix=".pdf"
+        ).name
+        with open(sanitized_pdf_path, "wb") as f:
+            f.write(response.content)
+
+        return sanitized_pdf_path
+
+    except Exception as e:
+        print(f"Error sanitizing PDF via API: {str(e)}")
+        raise e
+
+
+# ----------------- Local Annotation Removal ----------------- #
+def remove_annotations(pdf_path):
+    """
+    Remove annotations and comments from a sanitized PDF locally using PyPDF2.
+    Returns the path to the annotation-removed PDF.
+    """
+    try:
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
+        annot_removed_pdf_path = tempfile.NamedTemporaryFile(
+            delete=False, suffix=".pdf"
+        ).name
+
+        for page in reader.pages:
+            if "/Annots" in page:
+                del page["/Annots"]
+            writer.add_page(page)
+
+        with open(annot_removed_pdf_path, "wb") as f:
+            writer.write(f)
+
+        return annot_removed_pdf_path
+
+    except Exception as e:
+        print(f"Error removing annotations locally: {str(e)}")
+        raise e
+
+
+# ----------------- PDF to Image Conversion Function ----------------- #
 # ----------------- PDF to Image Conversion Function ----------------- #
 def convert_pdf_to_images(
     pdf_path, api_url="https://pdfhubaws.bizzaard.com/api/v1/convert/pdf/img"
 ):
     """
-    Convert a PDF file to a list of PNG images using an external API (similar to the Node.js code).
+    Convert a sanitized and annotation-removed PDF to a list of PNG images using an external API.
     Returns a list of dictionaries with image data and page indices.
     """
-    # Prepare form data for the API call
-    files = {"fileInput": ("input.pdf", open(pdf_path, "rb"), "application/pdf")}
-    data = {
-        "imageFormat": "png",
-        "singleOrMultiple": "multiple",
-        "colorType": "color",
-        "dpi": "300",
-    }
+    sanitized_pdf_path = None
+    annot_removed_pdf_path = None
+    api_upload_path = None
+    temp_zip_name = None
+    temp_dir = None
 
     try:
-        # Make the API call
-        response = requests.post(
-            api_url,
-            files=files,
-            data=data,
-            timeout=300,
-            headers={"Accept": "application/octet-stream"},
-            stream=True,
-        )
+        # Step 1: Sanitize via API
+        sanitized_pdf_path = sanitize_pdf_api(pdf_path)
 
-        if response.status_code != 200:
-            raise Exception(
-                f"PDF to PNG conversion failed with status {response.status_code}"
-            )
+        # Step 2: Remove annotations locally
+        annot_removed_pdf_path = remove_annotations(sanitized_pdf_path)
 
-        # Save the ZIP response to a temporary file
-        temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-        temp_zip.write(response.content)
-        temp_zip.close()
+        # Step 3: Create a copy for API upload to avoid locking issues
+        api_upload_path = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
+        shutil.copy2(annot_removed_pdf_path, api_upload_path)
 
-        # Extract PNGs from the ZIP
-        temp_dir = tempfile.mkdtemp()
+        # Step 4: Convert to images
+        files = None
         png_files = []
 
-        with ZipFile(temp_zip.name, "r") as zip_ref:
+        with open(api_upload_path, "rb") as f:
+            files = {"fileInput": ("input.pdf", f, "application/pdf")}
+            data = {
+                "imageFormat": "png",
+                "singleOrMultiple": "multiple",
+                "colorType": "color",
+                "dpi": "150",  # Keeping DPI lower to avoid oversized images
+            }
+
+            response = requests.post(
+                api_url,
+                files=files,
+                data=data,
+                timeout=300,
+                headers={"Accept": "application/octet-stream"},
+                stream=True,
+            )
+
+            if response.status_code != 200:
+                raise Exception(
+                    f"PDF to PNG conversion failed with status {response.status_code}"
+                )
+
+            # Write response content to temp file
+            temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+            temp_zip.write(response.content)
+            temp_zip.close()
+            temp_zip_name = temp_zip.name
+
+        # Create temp directory
+        temp_dir = tempfile.mkdtemp()
+
+        # Extract files
+        with ZipFile(temp_zip_name, "r") as zip_ref:
             zip_ref.extractall(temp_dir)
             for entry in zip_ref.namelist():
                 if entry.lower().endswith(".png"):
                     extracted_path = os.path.join(temp_dir, entry)
                     new_path = os.path.join(temp_dir, f"{uuid.uuid4()}.png")
                     os.rename(extracted_path, new_path)
+
+                    # Check image dimensions before loading
+                    with Image.open(new_path) as img:
+                        width, height = img.size
+                        total_pixels = width * height
+                        max_pixels = 2**30  # OpenCV default limit
+                        if total_pixels > max_pixels:
+                            print(
+                                f"Skipping {new_path}: {width}x{height} ({total_pixels} pixels) exceeds limit of {max_pixels}"
+                            )
+                            os.unlink(new_path)
+                            continue
+
                     image_data = cv2.imread(new_path)
+                    if image_data is None:
+                        print(f"Failed to load {new_path} with OpenCV")
+                        os.unlink(new_path)
+                        continue
+
                     image_data_rgb = cv2.cvtColor(image_data, cv2.COLOR_BGR2RGB)
                     png_files.append(
                         {
@@ -289,17 +393,49 @@ def convert_pdf_to_images(
                             "format": "png",
                         }
                     )
-                    os.unlink(new_path)  # Clean up individual PNG
-
-        # Clean up temporary files and directory
-        os.unlink(temp_zip.name)
-        shutil.rmtree(temp_dir)
+                    os.unlink(new_path)
 
         return png_files
 
     except Exception as e:
         print(f"Error converting PDF to PNG: {str(e)}")
         raise e
+
+    finally:
+        # Clean up all temporary files in finally block to ensure they're removed
+        # even if an exception occurs
+        try:
+            if temp_zip_name and os.path.exists(temp_zip_name):
+                os.unlink(temp_zip_name)
+        except Exception as e:
+            print(f"Warning: Failed to delete temp zip file: {str(e)}")
+
+        try:
+            if sanitized_pdf_path and os.path.exists(sanitized_pdf_path):
+                os.unlink(sanitized_pdf_path)
+        except Exception as e:
+            print(f"Warning: Failed to delete sanitized PDF: {str(e)}")
+
+        try:
+            if annot_removed_pdf_path and os.path.exists(annot_removed_pdf_path):
+                os.unlink(annot_removed_pdf_path)
+        except Exception as e:
+            print(f"Warning: Failed to delete annotation-removed PDF: {str(e)}")
+
+        try:
+            if api_upload_path and os.path.exists(api_upload_path):
+                os.unlink(api_upload_path)
+        except Exception as e:
+            print(f"Warning: Failed to delete API upload file: {str(e)}")
+
+        try:
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+        except Exception as e:
+            print(f"Warning: Failed to delete temp directory: {str(e)}")
+
+
+# Note: Ensure sanitize_pdf_api function is defined elsewhere in your code as per previous context
 
 
 # ----------------- Modified Gradio Interface Function ----------------- #
