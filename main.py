@@ -1,6 +1,6 @@
 from PyPDF2 import PdfReader, PdfWriter
 
-pdf_path = "D:/NIPL-PROJECTS/change-tracker-gradio/TCP-Z1503PSR-TRF1101 (002).pdf"
+pdf_path = "D:/NIPL-PROJECTS/change-tracker-gradio/examples/old.pdf"
 pdf_save_path = "D:/NIPL-PROJECTS/change-tracker-gradio/output.pdf"
 
 reader = PdfReader(pdf_path)

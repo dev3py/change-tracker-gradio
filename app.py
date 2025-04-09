@@ -662,6 +662,14 @@ with gr.Blocks(
         old_pdf = gr.File(label="Previous PDF", file_types=[".pdf"])
         new_pdf = gr.File(label="Latest PDF", file_types=[".pdf"])
 
+    gr.Examples(
+        examples=[
+            ["examples/old.pdf", "examples/new.pdf"],
+        ],
+        inputs=[old_pdf, new_pdf],
+        label="Example Pdfs",
+    )
+
     output_style = gr.Radio(
         choices=[
             "Only-Changed",
