@@ -3,6 +3,11 @@ import numpy as np
 import gradio as gr
 import tempfile
 import imageio
+import os
+import requests
+from zipfile import ZipFile
+import uuid
+import shutil
 
 
 # ----------------- Helper Functions (OpenCV Processing) ----------------- #
@@ -226,6 +231,124 @@ def detect_color_changed_elements(old_img, new_img, threshold):
     return (combined.astype(np.uint8)) * 255
 
 
+# ----------------- PDF to Image Conversion Function ----------------- #
+def convert_pdf_to_images(
+    pdf_path, api_url="https://pdfhubaws.bizzaard.com/api/v1/convert/pdf/img"
+):
+    """
+    Convert a PDF file to a list of PNG images using an external API (similar to the Node.js code).
+    Returns a list of dictionaries with image data and page indices.
+    """
+    # Prepare form data for the API call
+    files = {"fileInput": ("input.pdf", open(pdf_path, "rb"), "application/pdf")}
+    data = {
+        "imageFormat": "png",
+        "singleOrMultiple": "multiple",
+        "colorType": "color",
+        "dpi": "300",
+    }
+
+    try:
+        # Make the API call
+        response = requests.post(
+            api_url,
+            files=files,
+            data=data,
+            timeout=300,
+            headers={"Accept": "application/octet-stream"},
+            stream=True,
+        )
+
+        if response.status_code != 200:
+            raise Exception(
+                f"PDF to PNG conversion failed with status {response.status_code}"
+            )
+
+        # Save the ZIP response to a temporary file
+        temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        temp_zip.write(response.content)
+        temp_zip.close()
+
+        # Extract PNGs from the ZIP
+        temp_dir = tempfile.mkdtemp()
+        png_files = []
+
+        with ZipFile(temp_zip.name, "r") as zip_ref:
+            zip_ref.extractall(temp_dir)
+            for entry in zip_ref.namelist():
+                if entry.lower().endswith(".png"):
+                    extracted_path = os.path.join(temp_dir, entry)
+                    new_path = os.path.join(temp_dir, f"{uuid.uuid4()}.png")
+                    os.rename(extracted_path, new_path)
+                    image_data = cv2.imread(new_path)
+                    image_data_rgb = cv2.cvtColor(image_data, cv2.COLOR_BGR2RGB)
+                    png_files.append(
+                        {
+                            "imageData": image_data_rgb,
+                            "pageIndex": len(png_files) + 1,
+                            "format": "png",
+                        }
+                    )
+                    os.unlink(new_path)  # Clean up individual PNG
+
+        # Clean up temporary files and directory
+        os.unlink(temp_zip.name)
+        shutil.rmtree(temp_dir)
+
+        return png_files
+
+    except Exception as e:
+        print(f"Error converting PDF to PNG: {str(e)}")
+        raise e
+
+
+# ----------------- Modified Gradio Interface Function ----------------- #
+def process_pdfs(
+    old_pdf,
+    new_pdf,
+    output_style,
+    added_color,
+    removed_color,
+    changed_color,
+    color_threshold,
+):
+    """
+    Process two PDFs by converting them to images and comparing each page pair.
+    Returns a list of outputs for each page comparison.
+    """
+    if old_pdf is None or new_pdf is None:
+        return None, None, None
+
+    # Convert PDFs to images
+    old_images = convert_pdf_to_images(old_pdf)
+    new_images = convert_pdf_to_images(new_pdf)
+
+    # Ensure both PDFs have the same number of pages (or handle mismatch)
+    min_pages = min(len(old_images), len(new_images))
+    added_outputs, deleted_outputs, color_changed_outputs = [], [], []
+
+    for i in range(min_pages):
+        old_img = old_images[i]["imageData"]
+        new_img = new_images[i]["imageData"]
+
+        # Call the original image processing function for each page pair
+        added_out, deleted_out, color_changed_out = process_images(
+            old_img,
+            new_img,
+            output_style,
+            added_color,
+            removed_color,
+            changed_color,
+            color_threshold,
+        )
+        added_outputs.append(added_out)
+        deleted_outputs.append(deleted_out)
+        color_changed_outputs.append(color_changed_out)
+
+    # Combine outputs (e.g., as a list or stack them visually)
+    return added_outputs, deleted_outputs, color_changed_outputs
+
+
 # ----------------- Gradio Interface Function ----------------- #
 def process_images(
     old_img,
@@ -369,18 +492,16 @@ function refresh() {
     }
 }
 """
+
 with gr.Blocks(
-    title="Change Tracker",
-    theme=gr.themes.Monochrome().set(
-        loader_color="#FF0000",
-        # slider_color="#FF0000",
-    ),
+    title="Change Tracker (PDF)",
+    theme=gr.themes.Monochrome().set(loader_color="#FF0000"),
     js=js_func,
     css="footer{display:none !important}",
 ) as demo:
 
     with gr.Row():
-        gr.Markdown("# Change Tracker")
+        gr.Markdown("# Change Tracker (PDF)")
         with gr.Group():
             toggle_dark = gr.Button(value="Toggle Dark Mode")
 
@@ -390,7 +511,8 @@ with gr.Blocks(
     )
     gr.Markdown(
         """
-        Upload the **Previous Image** and the **Latest Image** and select an output style.
+        Upload the **Previous PDF** and the **Latest PDF** and select an output style.
+        Each page will be converted to images and compared.
         
         - **Only-Changed**: A white background with only the changed regions visible.
         - **Greyscale**: A Greyscale version of the image with the changed regions in full color.
@@ -401,17 +523,8 @@ with gr.Blocks(
     )
 
     with gr.Row():
-        old_image = gr.Image(label="Previous", type="numpy")
-        new_image = gr.Image(label="Latest", type="numpy")
-
-    gr.Examples(
-        examples=[
-            ["examples/old.png", "examples/new.png"],
-            ["examples/old4.png", "examples/new4.png"],
-        ],
-        inputs=[old_image, new_image],
-        label="Example Images",
-    )
+        old_pdf = gr.File(label="Previous PDF", file_types=[".pdf"])
+        new_pdf = gr.File(label="Latest PDF", file_types=[".pdf"])
 
     output_style = gr.Radio(
         choices=[
@@ -482,17 +595,17 @@ with gr.Blocks(
 
     with gr.Tabs():
         with gr.Tab("Added"):
-            added_output = gr.Image(label="Added (Output)")
+            added_output = gr.Gallery(label="Added (Output)")
         with gr.Tab("Removed"):
-            deleted_output = gr.Image(label="Removed (Output)")
+            deleted_output = gr.Gallery(label="Removed (Output)")
         with gr.Tab("Color-Changed"):
-            color_changed_output = gr.Image(label="Color-Changed (Output)")
+            color_changed_output = gr.Gallery(label="Color-Changed (Output)")
 
     process_button.click(
-        fn=process_images,
+        fn=process_pdfs,
         inputs=[
-            old_image,
-            new_image,
+            old_pdf,
+            new_pdf,
             output_style,
             added_color_picker,
             removed_color_picker,
